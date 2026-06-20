@@ -1,5 +1,6 @@
 use axum::{
-    extract::{Query, State},
+    body::Bytes,
+    extract::{DefaultBodyLimit, Query, State},
     http::StatusCode,
     response::IntoResponse,
     routing::{get, post},
@@ -18,6 +19,9 @@ pub fn routes(state: AppState) -> Router {
         .route("/api/eeg/meta", get(meta))
         .route("/api/eeg/window", get(window))
         .route("/api/eeg/fft", post(fft_endpoint))
+        // Allow large CSV/JSON uploads (full EDF exports can be tens of MB);
+        // Axum's default limit is only 2 MB.
+        .layer(DefaultBodyLimit::max(256 * 1024 * 1024))
         .with_state(state)
 }
 
@@ -41,8 +45,14 @@ async fn load_csv(
     Ok(Json(meta))
 }
 
-async fn load_edf() -> Result<Json<EdfPlaceholderResponse>, ApiError> {
-    Ok(Json(edf::placeholder()))
+async fn load_edf(
+    State(state): State<AppState>,
+    body: Bytes,
+) -> Result<Json<MetaResponse>, ApiError> {
+    let dataset = edf::parse(&body)?;
+    let meta = dataset.meta();
+    state.replace(dataset).await;
+    Ok(Json(meta))
 }
 
 async fn meta(State(state): State<AppState>) -> Result<Json<MetaResponse>, ApiError> {
@@ -56,9 +66,13 @@ async fn window(
     Query(query): Query<WindowQuery>,
 ) -> Result<Json<WindowResponse>, ApiError> {
     let dataset = state.dataset().await.ok_or(ApiError::NoDataset)?;
-    dataset
-        .window(&query.channel, query.start, query.size)
-        .map(Json)
+    let window = dataset.window(
+        &query.channel,
+        query.start,
+        query.size,
+        query.step.unwrap_or(1),
+    )?;
+    Ok(Json(window))
 }
 
 async fn fft_endpoint(
@@ -66,7 +80,7 @@ async fn fft_endpoint(
     Json(req): Json<FftRequest>,
 ) -> Result<Json<FftResponse>, ApiError> {
     let dataset = state.dataset().await.ok_or(ApiError::NoDataset)?;
-    let window = dataset.window(&req.channel, req.window_start, req.window_size)?;
+    let window = dataset.window(&req.channel, req.window_start, req.window_size, 1)?;
     Ok(Json(fft::calculate(
         &window,
         req.sampling_rate.unwrap_or(dataset.sampling_rate),
@@ -78,6 +92,7 @@ struct WindowQuery {
     start: usize,
     size: usize,
     channel: String,
+    step: Option<usize>,
 }
 
 pub enum ApiError {

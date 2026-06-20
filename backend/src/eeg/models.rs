@@ -17,33 +17,45 @@ impl EegDataset {
             .next()
             .map(Vec::len)
             .unwrap_or_default();
+        let mut channels: Vec<String> = self.channels.keys().cloned().collect();
+        channels.sort();
         MetaResponse {
             sampling_rate: self.sampling_rate,
-            channels: self.channels.keys().cloned().collect(),
+            channels,
             total_samples,
             duration_seconds: total_samples as f64 / self.sampling_rate,
             source: self.source.clone(),
         }
     }
+    /// Return a slice of `channel` from `start` covering `size` samples.
+    ///
+    /// `step` decimates the slice (keep every `step`-th sample), so a whole
+    /// multi-hour recording can be requested as a few thousand points for an
+    /// overview without shipping millions of values. `step` of 0 is treated
+    /// as 1 (no decimation).
     pub fn window(
         &self,
         channel: &str,
         start: usize,
         size: usize,
+        step: usize,
     ) -> Result<WindowResponse, EegError> {
         let signal = self
             .channels
             .get(channel)
             .ok_or_else(|| EegError::ChannelNotFound(channel.into()))?;
+        let step = step.max(1);
         let end = (start + size).min(signal.len());
-        let values = if start >= signal.len() {
-            vec![]
-        } else {
-            signal[start..end].to_vec()
-        };
-        let times = (start..start + values.len())
-            .map(|i| i as f64 / self.sampling_rate)
-            .collect();
+        let mut times = Vec::new();
+        let mut values = Vec::new();
+        if start < signal.len() {
+            let mut i = start;
+            while i < end {
+                times.push(i as f64 / self.sampling_rate);
+                values.push(signal[i]);
+                i += step;
+            }
+        }
         Ok(WindowResponse {
             sampling_rate: self.sampling_rate,
             channel: channel.into(),
@@ -102,12 +114,4 @@ pub struct FftResponse {
     pub window_size: usize,
     pub frequencies: Vec<f64>,
     pub magnitudes: Vec<f64>,
-}
-
-#[derive(Debug, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct EdfPlaceholderResponse {
-    pub status: String,
-    pub message: String,
-    pub planned_channels: Vec<String>,
 }

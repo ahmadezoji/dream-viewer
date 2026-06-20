@@ -12,6 +12,8 @@ pub enum EegError {
     ChannelNotFound(String),
     #[error("invalid input: {0}")]
     InvalidInput(String),
+    #[error("edf error: {0}")]
+    Edf(String),
     #[error("csv error: {0}")]
     Csv(#[from] csv::Error),
 }

@@ -1,0 +1,20 @@
+# Build artifacts (regenerated inside the image — never ship them in context)
+backend/target/
+frontend/node_modules/
+frontend/dist/
+
+# Git / IDE / OS junk
+.git/
+.idea/
+**/*.iml
+.vscode/
+**/.DS_Store
+
+# Logs and local data
+*.log
+*.edf
+*.bdf
+*.csv
+
+# Python tooling cache
+**/__pycache__/
