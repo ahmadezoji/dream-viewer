@@ -1,5 +1,7 @@
+pub mod dsp;
 pub mod edf;
 pub mod fft;
+pub mod hypnogram;
 pub mod models;
 pub mod parsers;
 pub mod store;

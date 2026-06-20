@@ -103,6 +103,8 @@ pub struct FftRequest {
     pub window_start: usize,
     pub window_size: usize,
     pub sampling_rate: Option<f64>,
+    #[serde(default)]
+    pub options: PreprocessOptions,
 }
 
 #[derive(Debug, Serialize)]
@@ -114,4 +116,77 @@ pub struct FftResponse {
     pub window_size: usize,
     pub frequencies: Vec<f64>,
     pub magnitudes: Vec<f64>,
+}
+
+/// Preprocessing toggles shared by the analysis endpoints.
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PreprocessOptions {
+    /// Subtract the window mean (removes DC drift).
+    #[serde(default)]
+    pub remove_dc: bool,
+    /// Apply moving-average smoothing.
+    #[serde(default)]
+    pub smooth: bool,
+    /// Smoothing window length in samples (defaults to 5).
+    pub smooth_window: Option<usize>,
+    /// Mains-notch frequency in Hz (50 or 60); `None` disables it.
+    pub notch_hz: Option<f64>,
+}
+
+/// Request shape for the preprocess / band-power analysis endpoints.
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AnalysisRequest {
+    pub channel: String,
+    pub window_start: usize,
+    pub window_size: usize,
+    #[serde(default)]
+    pub options: PreprocessOptions,
+}
+
+/// A preprocessed window plus its summary statistics.
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PreprocessResponse {
+    pub sampling_rate: f64,
+    pub channel: String,
+    pub window_start: usize,
+    pub window_size: usize,
+    pub times: Vec<f64>,
+    pub values: Vec<f64>,
+    pub stats: WindowStats,
+}
+
+/// Amplitude statistics for a window (units follow the signal, i.e. µV).
+#[derive(Debug, Default, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WindowStats {
+    pub min: f64,
+    pub max: f64,
+    pub mean: f64,
+    pub rms: f64,
+    pub peak_to_peak: f64,
+}
+
+/// Power within one EEG frequency band.
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BandPower {
+    pub name: String,
+    pub low_hz: f64,
+    pub high_hz: f64,
+    /// Absolute power (arbitrary units, ∝ µV²).
+    pub absolute: f64,
+    /// Share of total in-band power, 0–100.
+    pub relative_percent: f64,
+}
+
+/// Band-power breakdown for a window.
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BandPowerResponse {
+    pub bands: Vec<BandPower>,
+    pub dominant_band: String,
+    pub total_power: f64,
 }

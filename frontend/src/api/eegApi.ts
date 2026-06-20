@@ -1,5 +1,15 @@
 import { http } from './httpClient';
-import type { EegMeta, EegWindow, FftSpectrum, JsonSignalInput } from '../types/eeg';
+import type {
+  AnalysisRequest,
+  BandPowerResult,
+  EegMeta,
+  EegWindow,
+  FftSpectrum,
+  Hypnogram,
+  JsonSignalInput,
+  PreprocessOptions,
+  PreprocessResponse,
+} from '../types/eeg';
 
 /** Typed wrappers around the backend EEG endpoints. */
 export const eegApi = {
@@ -16,6 +26,14 @@ export const eegApi = {
       `/api/eeg/window?channel=${encodeURIComponent(channel)}&start=${start}&size=${size}&step=${step}`,
     ),
 
-  fft: (channel: string, windowStart: number, windowSize: number) =>
-    http.postJson<FftSpectrum>('/api/eeg/fft', { channel, windowStart, windowSize }),
+  fft: (channel: string, windowStart: number, windowSize: number, options: PreprocessOptions) =>
+    http.postJson<FftSpectrum>('/api/eeg/fft', { channel, windowStart, windowSize, options }),
+
+  preprocess: (req: AnalysisRequest) =>
+    http.postJson<PreprocessResponse>('/api/eeg/preprocess', req),
+
+  bandPower: (req: AnalysisRequest) =>
+    http.postJson<BandPowerResult>('/api/eeg/band-power', req),
+
+  getHypnogram: () => http.getJson<Hypnogram>('/api/eeg/hypnogram'),
 };

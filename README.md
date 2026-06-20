@@ -1,172 +1,135 @@
-# EEG Analyzer MVP
+# EEG Analyzer
 
-A clean monorepo for a first-phase EEG signal analysis tool. It loads EEG samples, serves windowed signal data from a Rust backend, calculates FFT spectra with `rustfft`, and visualizes signal windows plus frequency magnitudes in a Flutter Web dashboard.
+An educational EEG signal-exploration tool. It loads EEG recordings, serves
+windowed signal data from a Rust backend, computes FFT spectra and frequency
+band power, and visualizes everything in a React + TypeScript dashboard with
+friendly explanations.
 
-This project is intentionally **not** dream decoding, medical diagnosis, or a clinical accuracy claim. It is an engineering MVP for signal loading, window navigation, FFT, and visualization.
+> ⚠️ This project is **not** dream decoding, **not** medical diagnosis, and makes
+> **no claim of clinical accuracy**. It is a learning/research tool for exploring
+> EEG signals, their spectra, and band power.
 
 ## Project structure
 
 ```text
-eeg-analyzer/
-  frontend/              # Flutter Web dashboard
-  backend/               # Rust Axum API service
-  docker/                # Reserved for deployment assets
-  samples/               # Tiny JSON/CSV examples
-  .github/workflows/     # CI for Rust and Flutter
+dream-viewer/
+  frontend/            # React + TypeScript (Vite) dashboard, Plotly charts
+  backend/             # Rust Axum API + DSP (rustfft)
+  tools/               # edf_to_csv.py helper
+  .github/workflows/   # CI for Rust + Node
   docker-compose.yml
   README.md
 ```
 
+- **Frontend:** React 18, TypeScript, Vite, Plotly.js. Clean layering:
+  `api/` → `types/` → `features/eeg/{hooks,components,utils}`.
+- **Backend:** Rust, Axum, `rustfft`. Signal processing lives in `eeg::dsp`.
+
+## Running
+
+```bash
+docker compose up --build      # frontend → http://localhost:8081, backend → :8080
+```
+
+Local development:
+
+```bash
+# backend
+cd backend && cargo run            # serves on :8080
+# frontend
+cd frontend && npm install && npm run dev   # serves on :5173
+```
+
 ## Features
 
-- JSON EEG upload is fully supported.
-- CSV EEG upload is fully supported for `time,value` files.
-- EDF upload endpoint and Rust parser trait are present as an experimental placeholder.
-- Window-based processing avoids rendering a whole night of EEG at once.
-- FFT responses include frequency and magnitude arrays.
-- Flutter UI includes load buttons, EDF experimental option, signal chart, FFT chart, play/pause, forward/backward controls, current window, selected channel, sampling rate, loading, and error states.
+**Signal exploration**
+- Load JSON, CSV, or EDF files (Sleep-EDF PSG `.edf` is parsed natively).
+- Time-window sizes: 5s / 10s / 30s / 1m / 5m, plus a decimated **full-night** overview.
+- Jump to an exact timestamp; play/pause auto-advance; channel selector (multi-channel EDF).
+- Interactive Plotly charts: box-zoom, pan, scroll-zoom, hover cursor, unit-aware tooltips.
+
+**Analysis**
+- FFT spectrum with selectable display range (0–5 / 0–15 / 0–30 / 0–50 Hz).
+- Window statistics: min, max, mean, RMS, peak-to-peak (µV).
+- Band power (Delta/Theta/Alpha/Beta/Gamma): absolute, relative %, dominant band.
+- Preprocessing toggles: DC-offset removal, smoothing, 50/60 Hz mains notch.
+
+**Learning**
+- Plain-language cards explaining raw EEG, FFT, frequency bands, sleep stages, and windowing.
+- Non-diagnostic interpretation of the dominant band.
+
+## Loading PhysioNet Sleep-EDF data
+
+PhysioNet's [Sleep-EDF](https://physionet.org/content/sleep-edfx/) provides two
+files per night:
+
+| File | Contents | Status in this app |
+|------|----------|--------------------|
+| `*-PSG.edf` | Polysomnography **signals** (EEG, EOG, EMG, etc.) | ✅ Parsed natively — use **Load EDF** |
+| `*-Hypnogram.edf` | Expert **sleep-stage scoring** (EDF+ annotations) | 🚧 Models + UI ready; parsing planned |
+
+### Option A — load the PSG directly
+Click **Load EDF** and choose a `*-PSG.edf` file. The backend extracts the
+channels sharing the highest sampling rate (the 100 Hz EEG/EOG channels) and
+scales raw values to microvolts (µV).
+
+### Option B — convert to CSV
+Use the helper to export a single channel as CSV (one `value` per row):
+
+```bash
+python3 tools/edf_to_csv.py SC4001E0-PSG.edf --list          # show channels
+python3 tools/edf_to_csv.py SC4001E0-PSG.edf out.csv         # default EEG Fpz-Cz @ 100 Hz
+```
+
+Then click **Load CSV**. (CSV is assumed to be channel `Fpz-Cz` at 100 Hz.)
+
+## EEG frequency bands
+
+| Band  | Range (Hz) | Commonly associated with |
+|-------|-----------|--------------------------|
+| Delta | 0.5–4     | Deep sleep (N3), slow-wave activity |
+| Theta | 4–8       | Drowsiness, light sleep (N1), REM |
+| Alpha | 8–13      | Relaxed wakefulness, eyes closed |
+| Beta  | 13–30     | Active, alert thinking, concentration |
+| Gamma | 30–50     | Intense processing (also muscle/line-noise artifacts) |
+
+Sleep stages: **Wake** (alert), **N1** (light/drowsy), **N2** (stable light sleep),
+**N3** (deep slow-wave), **REM** (dreaming, brain activity near wake).
 
 ## API
 
 ```http
-POST /api/eeg/load-json
-POST /api/eeg/load-csv
-POST /api/eeg/load-edf
+POST /api/eeg/load-json      # { channel, samplingRate, signal[] }
+POST /api/eeg/load-csv       # text/csv, single `value` column
+POST /api/eeg/load-edf       # raw .edf bytes (application/octet-stream)
 GET  /api/eeg/meta
-GET  /api/eeg/window?start=0&size=1024&channel=Fpz-Cz
-POST /api/eeg/fft
+GET  /api/eeg/window?channel=&start=&size=&step=
+POST /api/eeg/fft            # { channel, windowStart, windowSize, options? }
+POST /api/eeg/preprocess     # { channel, windowStart, windowSize, options } -> window + stats
+POST /api/eeg/band-power     # { channel, windowStart, windowSize, options } -> band powers
+GET  /api/eeg/hypnogram      # placeholder (available:false) until EDF+ parsing lands
 ```
 
-Example JSON input:
+`options` (all optional): `{ removeDc, smooth, smoothWindow, notchHz }`.
 
-```json
-{
-  "samplingRate": 100,
-  "channel": "Fpz-Cz",
-  "signal": [12.3, 11.8, 13.1, 10.9]
-}
-```
+## Limitations
 
-Example CSV input:
+- **No dream decoding.** This tool does not infer dreams, thoughts, or imagery.
+- **No medical diagnosis** and no claim of clinical accuracy. Not for clinical use.
+- Automatic sleep-stage scoring is **not** implemented (hypnogram is a placeholder).
+- CSV loading assumes a single `Fpz-Cz` channel at 100 Hz.
 
-```csv
-time,value
-0.00,12.3
-0.01,11.8
-0.02,13.1
-0.03,10.9
-```
+## Roadmap
 
-## PhysioNet Sleep-EDF data
+- [ ] Parse EDF+ `*-Hypnogram.edf` annotations -> render the sleep-stage timeline.
+- [ ] Spectrogram (time-frequency) view.
+- [ ] Per-band power trends across the whole night.
+- [ ] Configurable band definitions and notch Q.
+- [ ] Export of analysis results (CSV/JSON).
 
-To use real data, go to PhysioNet, search for **Sleep-EDF**, and download matching PSG EDF files and hypnogram files.
-
-Example file names:
-
-```text
-SC4001E0-PSG.edf
-SC4001EC-Hypnogram.edf
-```
-
-- PSG files contain EEG/PSG signals sampled across a full night of sleep.
-- Hypnogram EDF files contain sleep-stage annotations.
-- EEG channels may include:
-
-```text
-Fpz-Cz
-Pz-Oz
-```
-
-Some tools expose channel names with an `EEG ` prefix, for example `EEG Fpz-Cz`.
-
-## Supported input formats in the MVP
-
-- **JSON:** fully supported through `/api/eeg/load-json`.
-- **CSV:** fully supported through `/api/eeg/load-csv` for files with a `value` column.
-- **EDF:** experimental/planned. The backend includes an `EdfReader` abstraction so a vetted Rust EDF implementation can be added without changing the API shape.
-
-## Convert EDF to CSV for this MVP
-
-Install Python tools:
+## Development
 
 ```bash
-pip install mne pandas
+cd backend && cargo test && cargo clippy --all-targets -- -D warnings && cargo fmt --check
+cd frontend && npm run typecheck && npm run build
 ```
-
-Convert a Sleep-EDF PSG file channel to CSV:
-
-```python
-import mne
-import pandas as pd
-
-raw = mne.io.read_raw_edf("SC4001E0-PSG.edf", preload=True)
-
-channel = "EEG Fpz-Cz"
-data, times = raw[channel]
-
-df = pd.DataFrame({
-    "time": times,
-    "value": data[0]
-})
-
-df.to_csv("sample_eeg.csv", index=False)
-
-print(raw.ch_names)
-print(raw.info["sfreq"])
-```
-
-## Run locally
-
-Backend:
-
-```bash
-cd backend
-cargo run
-```
-
-Frontend:
-
-```bash
-cd frontend
-flutter pub get
-flutter run -d chrome
-```
-
-Open the Flutter app and load `samples/sample_eeg.json` or `samples/sample_eeg.csv`.
-
-## Run with Docker
-
-```bash
-docker compose up --build
-```
-
-The backend listens on `http://localhost:8080`; the frontend is served on `http://localhost:8081`.
-
-## CI/CD
-
-GitHub Actions run:
-
-- Rust fmt
-- Rust clippy
-- Rust tests
-- backend build
-- Flutter analyze
-- Flutter tests
-- Flutter web build
-
-## Future-ready design
-
-The architecture is prepared for future phases:
-
-- Sleep-stage detection
-- EDF hypnogram annotation visualization
-- Band power analysis: delta, theta, alpha, beta, gamma
-- Dream journal features
-- AI interpretation helpers
-- Real EEG device connection
-- Flutter desktop/mobile support
-- `flutter_rust_bridge` integration later
-
-## EDF implementation notes
-
-To add native EDF support, implement `EdfReader` in `backend/src/eeg/edf.rs`, map Sleep-EDF signal labels such as `Fpz-Cz` and `Pz-Oz` into the shared `EegDataset`, and preserve hypnogram annotations as a separate timeline model for future visualization.

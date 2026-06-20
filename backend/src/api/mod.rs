@@ -8,7 +8,7 @@ use axum::{
 };
 use serde::Deserialize;
 
-use crate::eeg::{edf, fft, models::*, parsers, store::AppState};
+use crate::eeg::{dsp, edf, fft, hypnogram, models::*, parsers, store::AppState};
 
 pub fn routes(state: AppState) -> Router {
     Router::new()
@@ -19,6 +19,9 @@ pub fn routes(state: AppState) -> Router {
         .route("/api/eeg/meta", get(meta))
         .route("/api/eeg/window", get(window))
         .route("/api/eeg/fft", post(fft_endpoint))
+        .route("/api/eeg/preprocess", post(preprocess_endpoint))
+        .route("/api/eeg/band-power", post(band_power_endpoint))
+        .route("/api/eeg/hypnogram", get(hypnogram_endpoint))
         // Allow large CSV/JSON uploads (full EDF exports can be tens of MB);
         // Axum's default limit is only 2 MB.
         .layer(DefaultBodyLimit::max(256 * 1024 * 1024))
@@ -80,11 +83,50 @@ async fn fft_endpoint(
     Json(req): Json<FftRequest>,
 ) -> Result<Json<FftResponse>, ApiError> {
     let dataset = state.dataset().await.ok_or(ApiError::NoDataset)?;
-    let window = dataset.window(&req.channel, req.window_start, req.window_size, 1)?;
+    let mut window = dataset.window(&req.channel, req.window_start, req.window_size, 1)?;
+    window.values = dsp::preprocess(&window.values, dataset.sampling_rate, &req.options);
     Ok(Json(fft::calculate(
         &window,
         req.sampling_rate.unwrap_or(dataset.sampling_rate),
     )))
+}
+
+/// Return a preprocessed window (DC removal / smoothing / notch) and its
+/// amplitude statistics, for the signal chart and stats panel.
+async fn preprocess_endpoint(
+    State(state): State<AppState>,
+    Json(req): Json<AnalysisRequest>,
+) -> Result<Json<PreprocessResponse>, ApiError> {
+    let dataset = state.dataset().await.ok_or(ApiError::NoDataset)?;
+    let window = dataset.window(&req.channel, req.window_start, req.window_size, 1)?;
+    let values = dsp::preprocess(&window.values, dataset.sampling_rate, &req.options);
+    let stats = dsp::stats(&values);
+    Ok(Json(PreprocessResponse {
+        sampling_rate: window.sampling_rate,
+        channel: window.channel,
+        window_start: window.window_start,
+        window_size: values.len(),
+        times: window.times,
+        values,
+        stats,
+    }))
+}
+
+/// Compute Delta/Theta/Alpha/Beta/Gamma band power for the (preprocessed) window.
+async fn band_power_endpoint(
+    State(state): State<AppState>,
+    Json(req): Json<AnalysisRequest>,
+) -> Result<Json<BandPowerResponse>, ApiError> {
+    let dataset = state.dataset().await.ok_or(ApiError::NoDataset)?;
+    let window = dataset.window(&req.channel, req.window_start, req.window_size, 1)?;
+    let values = dsp::preprocess(&window.values, dataset.sampling_rate, &req.options);
+    Ok(Json(dsp::band_power(&values, dataset.sampling_rate)))
+}
+
+/// Sleep-stage timeline. Currently a placeholder until EDF+ hypnogram parsing
+/// is implemented (see `eeg::hypnogram`).
+async fn hypnogram_endpoint() -> Json<hypnogram::Hypnogram> {
+    Json(hypnogram::placeholder())
 }
 
 #[derive(Deserialize)]
